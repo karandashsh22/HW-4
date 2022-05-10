@@ -1,0 +1,176 @@
+---
+title: "131homework-4"
+author: "Hector He"
+date: "4/29/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+titanic <- read.csv('~/Desktop/Spring 2022/PSTAT 131/homework/homework-4/data/titanic.csv')
+library(tidyverse)
+library(tidymodels)
+library(readr)
+tidymodels_prefer()
+```
+Question 1
+Split the data, stratifying on the outcome variable, survived. You should choose the proportions to split the data into. Verify that the training and testing data sets have the appropriate number of observations.
+```{r}
+titanic <- titanic %>%
+  mutate(survived = factor(survived, levels = c('Yes','No'))) %>%
+  mutate(pclass = factor(pclass, levels = c('1','2','3')))
+head(titanic)
+```
+
+```{r}
+set.seed(2000)
+titanic_split <- initial_split(titanic, prop = 0.75, strata = survived)
+titanic_test <- testing(titanic_split)
+titanic_train <- training(titanic_split)
+```
+
+```{r}
+dim(titanic_test)
+dim(titanic_train)
+```
+Question 2
+Fold the training data. Use k-fold cross-validation, with k=10.
+```{r}
+titanic_folds <- vfold_cv(titanic_train, v = 10)
+titanic_folds
+```
+the k-fold cross-validation divides the training set into k=10 roughly equal sebsets and each time holds out one of the subsets from the data fitting as a validation set to estimate the prediction error, applying the learned model on the remaining observations. it can be implemented in order to find the best value of degree that yields the closest fit in hyperparameter tuning.
+
+```{r}
+titanic_recipe <- recipe(survived ~ pclass +sex +age +sib_sp +parch +fare, data = titanic_train) %>% 
+  step_impute_linear(age, impute_with = imp_vars(pclass, fare)) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_interact(terms = ~ age:fare) %>% 
+  step_interact(terms = ~ starts_with('sex'):fare) %>% 
+  step_center(all_predictors()) %>% 
+  step_scale(all_predictors()) 
+```
+
+```{r}
+glm_titanic_train <- logistic_reg() %>% 
+  set_engine("glm") %>% 
+  set_mode("classification")
+glm_wkflow <- workflow() %>% 
+  add_model(glm_titanic_train) %>% 
+  add_recipe(titanic_recipe)
+```
+
+```{r}
+glm_tuned <- recipe(survived ~ pclass +sex +age +sib_sp +parch +fare, data = titanic_train) %>%
+  step_poly(pclass +sex +age +sib_sp +parch +fare, degree = tune())
+glm_tuned_wf <- workflow() %>%
+  add_recipe(glm_tuned) %>%
+  add_model(glm_titanic_train)
+```
+
+```{r}
+lda_titanic_train <- discrim_linear() %>% 
+  set_mode("classification") %>% 
+  set_engine("MASS")
+lda_wkflow <- workflow() %>% 
+  add_model(lda_titanic_train) %>% 
+  add_recipe(titanic_recipe)
+```
+
+```{r}
+lda_tuned <- recipe(survived ~ pclass +sex +age +sib_sp +parch +fare, data = titanic_train) %>%
+  step_poly(pclass +sex +age +sib_sp +parch +fare, degree = tune())
+lda_tuned_wf <- workflow() %>%
+  add_recipe(lda_tuned) %>%
+  add_model(lda_titanic_train)
+```
+
+```{r}
+qda_titanic_train <- discrim_quad() %>% 
+  set_mode("classification") %>% 
+  set_engine("MASS")
+qda_wkflow <- workflow() %>% 
+  add_model(qda_titanic_train) %>% 
+  add_recipe(titanic_recipe)
+```
+
+```{r}
+qda_tuned <- recipe(survived ~ pclass +sex +age +sib_sp +parch +fare, data = titanic_train) %>%
+  step_poly(pclass +sex +age +sib_sp +parch +fare, degree = tune())
+qda_tuned_wf <- workflow() %>%
+  add_recipe(qda_tuned) %>%
+  add_model(qda_titanic_train)
+```
+
+```{r}
+degree_grid <- grid_regular(degree(range = c(1, 10)), levels = 10)
+degree_grid
+```
+
+```{r}
+tune_res_glm <- tune_grid(
+  object = glm_tuned_wf, 
+  resamples = titanic_folds, 
+  grid = degree_grid)
+```
+
+```{r}
+tune_res_lda <- tune_grid(
+  object = lda_tuned_wf, 
+  resamples = titanic_folds, 
+  grid = degree_grid)
+```
+
+```{r}
+tune_res_qda <- tune_grid(
+  object = qda_tuned_wf, 
+  resamples = titanic_folds, 
+  grid = degree_grid)
+```
+```{r}
+collect_metrics(tune_res_glm)
+```
+
+
+```{r}
+glm_fit <- fit(lda_wkflow, titanic_folds)
+glm_fit %>% 
+  extract_fit_parsnip() %>% 
+  tidy()
+```
+
+
+```{r}
+pre_accuracies <- c(glm_acc$.estimate, lda_acc$.estimate, qda_acc$.estimate, nbayes_acc$.estimate)
+pre_models <- c("Logistic Regression", "LDA", "QDA", "Naive Bayes")
+pre_results <- tibble(accuracies = pre_accuracies, models = pre_models)
+pre_results %>% 
+  arrange(-accuracies)
+```
+
+
+```{r}
+titanic_pre_glm <- predict(glm_fit, new_data = titanic_train, type = "prob")
+titanic_pre_glm <- bind_cols(titanic_pre_glm, titanic_train)
+head(titanic_pre_glm)
+```
+
+```{r}
+multi_metric <- metric_set(accuracy, sensitivity, specificity)
+augment(glm_fit, new_data = titanic_test) %>%
+  multi_metric(truth = survived, estimate = .pred_class)
+```
+
+
+
+
+
+
+
+
+
+
