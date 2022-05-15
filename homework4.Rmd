@@ -2,22 +2,26 @@
 title: "131homework-4"
 author: "Hector He"
 date: "4/29/2022"
-output: html_document
+output:
+  pdf_document: default
+  html_document: default
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-
 ```{r}
 titanic <- read.csv('~/Desktop/Spring 2022/PSTAT 131/homework/homework-4/data/titanic.csv')
-library(tidyverse)
+library(dplyr)
 library(tidymodels)
+library(tidyverse)
 library(readr)
 tidymodels_prefer()
 ```
+
 Question 1
+
 Split the data, stratifying on the outcome variable, survived. You should choose the proportions to split the data into. Verify that the training and testing data sets have the appropriate number of observations.
 ```{r}
 titanic <- titanic %>%
@@ -37,24 +41,32 @@ titanic_train <- training(titanic_split)
 dim(titanic_test)
 dim(titanic_train)
 ```
+```{r}
+titanic_recipe <- recipe(survived ~ pclass +sex +age +sib_sp +parch +fare, data = titanic_train) %>% 
+  step_impute_linear(age, impute_with = imp_vars(pclass, fare)) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_center(all_predictors()) %>% 
+  step_scale(all_predictors()) 
+```
+
+
 Question 2
+
 Fold the training data. Use k-fold cross-validation, with k=10.
 ```{r}
 titanic_folds <- vfold_cv(titanic_train, v = 10)
 titanic_folds
 ```
+Question 3
+
+In your own words, explain what we are doing in Question 2. What is k-fold cross-validation? Why should we use it, rather than simply fitting and testing models on the entire training set? If we did use the entire training set, what resampling method would that be?
+
 the k-fold cross-validation divides the training set into k=10 roughly equal sebsets and each time holds out one of the subsets from the data fitting as a validation set to estimate the prediction error, applying the learned model on the remaining observations. it can be implemented in order to find the best value of degree that yields the closest fit in hyperparameter tuning.
 
-```{r}
-titanic_recipe <- recipe(survived ~ pclass +sex +age +sib_sp +parch +fare, data = titanic_train) %>% 
-  step_impute_linear(age, impute_with = imp_vars(pclass, fare)) %>%
-  step_dummy(all_nominal_predictors()) %>%
-  step_interact(terms = ~ age:fare) %>% 
-  step_interact(terms = ~ starts_with('sex'):fare) %>% 
-  step_center(all_predictors()) %>% 
-  step_scale(all_predictors()) 
-```
 
+Question 4
+
+Set up workflows for 3 models:
 ```{r}
 glm_titanic_train <- logistic_reg() %>% 
   set_engine("glm") %>% 
@@ -65,112 +77,71 @@ glm_wkflow <- workflow() %>%
 ```
 
 ```{r}
-glm_tuned <- recipe(survived ~ pclass +sex +age +sib_sp +parch +fare, data = titanic_train) %>%
-  step_poly(pclass +sex +age +sib_sp +parch +fare, degree = tune())
-glm_tuned_wf <- workflow() %>%
-  add_recipe(glm_tuned) %>%
-  add_model(glm_titanic_train)
-```
-
-```{r}
 lda_titanic_train <- discrim_linear() %>% 
-  set_mode("classification") %>% 
-  set_engine("MASS")
+  set_engine("MASS") %>% 
+  set_mode("classification")
 lda_wkflow <- workflow() %>% 
   add_model(lda_titanic_train) %>% 
   add_recipe(titanic_recipe)
 ```
 
 ```{r}
-lda_tuned <- recipe(survived ~ pclass +sex +age +sib_sp +parch +fare, data = titanic_train) %>%
-  step_poly(pclass +sex +age +sib_sp +parch +fare, degree = tune())
-lda_tuned_wf <- workflow() %>%
-  add_recipe(lda_tuned) %>%
-  add_model(lda_titanic_train)
-```
-
-```{r}
 qda_titanic_train <- discrim_quad() %>% 
-  set_mode("classification") %>% 
-  set_engine("MASS")
+  set_engine("MASS") %>% 
+  set_mode("classification")
 qda_wkflow <- workflow() %>% 
   add_model(qda_titanic_train) %>% 
   add_recipe(titanic_recipe)
 ```
+there will be theoretically 30 models in total to be fitted to the data across all folds
 
+
+Question 5
+
+Fit each of the models created in Question 4 to the folded data.
 ```{r}
-qda_tuned <- recipe(survived ~ pclass +sex +age +sib_sp +parch +fare, data = titanic_train) %>%
-  step_poly(pclass +sex +age +sib_sp +parch +fare, degree = tune())
-qda_tuned_wf <- workflow() %>%
-  add_recipe(qda_tuned) %>%
-  add_model(qda_titanic_train)
+glm_fit <- fit_resamples(glm_wkflow, titanic_folds)
 ```
 
 ```{r}
-degree_grid <- grid_regular(degree(range = c(1, 10)), levels = 10)
-degree_grid
+# lda_fit <- fit_resamples(lda_wkflow, titanic_folds)
 ```
 
 ```{r}
-tune_res_glm <- tune_grid(
-  object = glm_tuned_wf, 
-  resamples = titanic_folds, 
-  grid = degree_grid)
+# qda_fit <- fit_resamples(qda_wkflow, titanic_folds)
+```
+"Error in pkgs$pkg[[1]] : subscript out of bounds"
+
+due to unforeseen reasons, unable to solve this error in LDA and QDA models when fitting them to the folded data
+
+
+Question 6
+
+Use collect_metrics() to print the mean and standard errors of the performance metric accuracy across all folds for each of the four models.
+```{r}
+collect_metrics(glm_fit)
+```
+
+
+Question 7
+Now that you’ve chosen a model, fit your chosen model to the entire training dataset (not to the folds).
+```{r}
+glm_fit_train <- fit(glm_wkflow, titanic_train)
+```
+
+
+Question 8
+
+Finally, with your fitted model, use predict(), bind_cols(), and accuracy() to assess your model’s performance on the testing data! Compare your model’s testing accuracy to its average accuracy across folds. Describe what you see.
+```{r}
+titanic_pre_glm <- predict(glm_fit_train, new_data = titanic_test, type = "prob")
+titanic_pre_glm <- bind_cols(titanic_pre_glm, titanic_test)
+head(titanic_pre_glm, n = 10)
 ```
 
 ```{r}
-tune_res_lda <- tune_grid(
-  object = lda_tuned_wf, 
-  resamples = titanic_folds, 
-  grid = degree_grid)
+glm_acc <- augment(glm_fit_train, new_data = titanic_test) %>%
+  accuracy(truth = survived, estimate = .pred_class)
+glm_acc
 ```
-
-```{r}
-tune_res_qda <- tune_grid(
-  object = qda_tuned_wf, 
-  resamples = titanic_folds, 
-  grid = degree_grid)
-```
-```{r}
-collect_metrics(tune_res_glm)
-```
-
-
-```{r}
-glm_fit <- fit(lda_wkflow, titanic_folds)
-glm_fit %>% 
-  extract_fit_parsnip() %>% 
-  tidy()
-```
-
-
-```{r}
-pre_accuracies <- c(glm_acc$.estimate, lda_acc$.estimate, qda_acc$.estimate, nbayes_acc$.estimate)
-pre_models <- c("Logistic Regression", "LDA", "QDA", "Naive Bayes")
-pre_results <- tibble(accuracies = pre_accuracies, models = pre_models)
-pre_results %>% 
-  arrange(-accuracies)
-```
-
-
-```{r}
-titanic_pre_glm <- predict(glm_fit, new_data = titanic_train, type = "prob")
-titanic_pre_glm <- bind_cols(titanic_pre_glm, titanic_train)
-head(titanic_pre_glm)
-```
-
-```{r}
-multi_metric <- metric_set(accuracy, sensitivity, specificity)
-augment(glm_fit, new_data = titanic_test) %>%
-  multi_metric(truth = survived, estimate = .pred_class)
-```
-
-
-
-
-
-
-
-
-
-
+the testing accuracy is around 81.7 % which is slightly higher than the average across all folds, 80.5 %
